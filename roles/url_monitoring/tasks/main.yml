@@ -1,0 +1,8 @@
+---
+    - name: Include variables for vars file
+      include_vars: ../vars/variables.yml 
+
+    - name: Include Task for URL Monitoring
+      include_tasks:  monitorURL.yml
+
+ 

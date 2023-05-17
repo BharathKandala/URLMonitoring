@@ -1,0 +1,33 @@
+---
+#variable file
+#Provide Input file(.csv) with URLS to be Monitored
+input_file: 'URL_Checkup.csv'
+
+## Give the SMTP details (Host,port) and API details(apikey,token etc)
+smtphost: smtp.sendgrid.net
+port: 465
+apitoken: "123##*%" 
+apikey: "apikey-name"
+
+# Do you want to create Service now Ticket(yes| no) ?
+servicenow_ticket: no
+snow_host: 'xyz.service-now.com'
+snow_uid: admin
+snow_pwd: xyz
+
+
+#Update Email-IDs:
+to_email: " "
+cc_email: " "
+## Give the reply mail id
+reply_mail: " "
+
+#No change required
+dev_urls_inCSV: ['URL']
+dev_status_inCSV: ['URL_Status']
+Application_inCSV: ['Applications']
+dev_inactive_urls: ''
+qas_inactive_urls: ''
+prd_inactive_urls: ''
+inc_number: ''
+inactive_urls: []

@@ -1,0 +1,18 @@
+---
+- hosts: localhost
+  gather_facts: yes
+  collections:
+    - servicenow.servicenow
+  tasks:
+  
+    - name: Include variables for vars file
+      include_vars: ../vars/variables.yml 
+      
+    # Public URL
+    - name: Execute Public URL
+      include_tasks: ../tasks/monitorURL.yml
+      
+    
+    # # Private URL
+    # - name: Execute Private URL
+      # include_tasks: ../tasks/monitorURL_Private.yml

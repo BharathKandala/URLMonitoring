@@ -1,0 +1,182 @@
+---
+- name: Get timestamp from the system
+  shell: "date +%Y-%m-%d%H-%M-%S"
+  delegate_to: localhost
+  register: tstamp
+
+- name: Set variables
+  set_fact:
+    cur_date: "{{ tstamp.stdout[0:10]}}"
+    cur_time: "{{ tstamp.stdout[10:]}}"
+    cur_date_time: "{{tstamp.stdout[0:10]}}-{{ tstamp.stdout[10:]}}"
+    
+- name: Install required python packages
+  pip:
+    name: [openpyxl,pandas,pysnow]
+    
+- name: Delete the output files
+  shell: "rm -rf Application_status*"
+  register: delete  
+
+- name: Read csv file 
+  read_csv:
+    path: "{{ input_file }}"
+  register: csv_result
+  
+  # - debug: var=csv_result
+   
+- name: Find URL status
+  block:
+  - name: loop through URL rows in CSV
+    uri:
+      url: "{{ item.URL }}"
+      method: GET
+      return_content: no
+      timeout: 5
+    with_items: "{{ csv_result.list }}"
+    ignore_errors: yes
+    register: dev_urlStatus
+    
+ # - debug: var=dev_urlStatus
+
+  rescue:
+  - debug:
+      msg: "404 - URL not found"
+
+- name: Build a list of all the URL's and their status
+  set_fact:
+    dev_urls_inCSV: "{{ dev_urls_inCSV }} + ['{% if item.url == 'NA' %} {% else %}{{ item.url }}{% endif %}']"
+    dev_status_inCSV:  "{{ dev_status_inCSV }} + ['{% if item.status == 200 %}Active{% elif item.url == 'NA'  %} {% else %}InActive{% endif %}']"
+  with_items: "{{ dev_urlStatus.results }}"
+  no_log: true
+
+- name: set fact Application
+  set_fact:
+    Application_inCSV: "{{ Application_inCSV }} + ['{{ item.Applications }}']"
+  with_items: "{{ csv_result.list }}"
+  no_log: true
+  
+- name: setfact Inactive URLS
+  set_fact:
+    dev_inactive_urls: "{{ dev_inactive_urls | default('') + item.url }}<br>"
+  when: 
+    - item.status != 200 
+    - item.url != "NA"
+  with_items: "{{ dev_urlStatus.results }}"
+  no_log: true
+  
+- debug: var=dev_inactive_urls
+
+- name: setfact Inactive URLS array
+  set_fact:
+    inactive_urls: "{{ inactive_urls + [item.url] }}"
+  when: 
+    - item.status != 200 
+    - item.url != "NA"
+  with_items: "{{ dev_urlStatus.results }}"
+  no_log: true
+  
+- debug: var=inactive_urls
+
+- name: Create service now ticket (SNOW)
+  servicenow.servicenow.snow_record:
+           username: "{{ snow_uid }}"
+           password: "{{ snow_pwd }}"
+           host: "{{ snow_host }}"
+           state: present
+           data:
+               short_description: "URL {{ item }} is not accessible please take approprate actions"
+               priority: 2
+  with_items: "{{ inactive_urls }}"
+  when: 
+       - servicenow_ticket == "yes"
+       - dev_inactive_urls | count > 0
+  register: snow_ticket
+#  no_log: true
+  
+- set_fact:
+    inc_number: "{{ inc_number | default('') + item.record.number }}<br>"
+  with_items: "{{ snow_ticket.results }}"
+  when: 
+       - servicenow_ticket == "yes"
+  
+- debug: var=inc_number
+  when: 
+       - servicenow_ticket == "yes"
+       
+- name: write lines to CSV file
+  copy:
+    content: "{{ Application_inCSV | zip(dev_urls_inCSV,dev_status_inCSV) | map('join', ', ')  | join('\n') }}"
+    dest: "Application_status_{{ cur_date_time }}.csv"
+    
+- name: Invoking Python script
+  shell: python Check_Active.py
+  register: python_script
+  
+- debug: var=python_script
+
+- name: renaming the file to xlsx
+  shell: "mv Application_status_{{ cur_date_time }}.csv.xlsx Application_status_{{ cur_date_time }}.xlsx"
+
+- name: Sending an email using Ansible for consolidated Status.
+  mail:
+    host: "{{ smtphost }}"
+    port: "{{ port }}"
+    username: "{{ apikey }}"
+    password: "{{ apitoken }}"    ## Give the API token
+    from: "Ansible Bot<eca.ansible@ibm.com>"
+    to: "{{ to_email }}"
+    cc: "{{ cc_email }}"
+    subject: "URL Monitoring - Consolidated Status Report"
+    body: "Dear All,<br>\n Greeting!!<br><br>\n Please find the consolidated list of Network URLs which are in Active and Inactive state.<br>The URLs marked in <font color='red'>Red</font> are in Inactive state. \n<br><br>Regards<br><strong>IBM Ansible Bot</strong> <br><br><strong>Disclaimer:</strong> This is a system generated email, do not reply to this email id"
+    subtype: html
+    attach: "Application_status_{{ cur_date_time }}.xlsx"
+    headers:
+     - Reply-To="{{ reply_mail }}"    ## Give the reply mail id
+     - X-Special="This is a system generated email,Please do not reply to this email"
+  delegate_to: localhost 
+  
+- name: Sending an email using Ansible for Inactive URLs(With ServiceNow Ticket)
+  mail:
+    host: "{{ smtphost }}"
+    port: "{{ port }}"
+    username: "{{ apikey }}"
+    password: "{{ apitoken }}"          ## Give the API token
+    from: "Ansible Bot<eca.ansible@ibm.com>"
+    to: "{{ to_email }}"
+    cc: "{{ cc_email }}"
+    subject: "URL Monitoring - List of Inactive URLs"
+    body: "Dear All,<br>\n Greeting!!<br><br>\n The below list of Network URLs are in Inactive status:<br><br><hr><strong><u><font color='red'>Inactive</font> URLs:</u></strong><br>{{ dev_inactive_urls }}<hr> The Corresponding <b>Service Now Ticket Id's:</b><br>{{ inc_number }}\n<br><br>Regards<br><strong>IBM Ansible Bot</strong><br><br><strong>Disclaimer:</strong> This is a system generated email, do not reply to this email id"
+    subtype: html
+    headers:
+     - Reply-To="{{ reply_mail }}"   ## Give the reply mail id
+     - X-Special="This is a system generated email,Please do not reply to this email"
+  delegate_to: localhost 
+  when: 
+       - servicenow_ticket == "yes"
+
+- name: Sending an email using Ansible for Inactive URLs(No ServiceNow Ticket)
+  mail:
+    host: "{{ smtphost }}"
+    port: "{{ port }}"
+    username: "{{ apikey }}"
+    password: "{{ apitoken }}"          ## Give the API token
+    from: "Ansible Bot<eca.ansible@ibm.com>"
+    to: "{{ to_email }}"
+    cc: "{{ cc_email }}"
+    subject: "URL Monitoring - List of Inactive URLs"
+    body: "Dear All,<br>\n Greeting!!<br><br>\n The below list of Network URLs are in Inactive status:<br><br><hr><strong><u><font color='red'>Inactive</font> URLs:</u></strong><br>{{ dev_inactive_urls }}<br><br>Regards<br><strong>IBM Ansible Bot</strong><br><br><strong>Disclaimer:</strong> This is a system generated email, do not reply to this email id"
+    subtype: html
+    headers:
+     - Reply-To="{{ reply_mail }}"   ## Give the reply mail id
+     - X-Special="This is a system generated email,Please do not reply to this email"
+  delegate_to: localhost 
+  when: 
+     - servicenow_ticket == "no"
+  
+
+- name: Delete the output files
+  shell: "rm -rf Application_status*"
+  register: delete
+
+- debug: var=delete
