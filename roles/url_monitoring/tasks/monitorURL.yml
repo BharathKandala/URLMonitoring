@@ -23,8 +23,6 @@
     path: "{{ input_file }}"
   register: csv_result
   
-  # - debug: var=csv_result
-   
 - name: Find URL status
   block:
   - name: loop through URL rows in CSV
